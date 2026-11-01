@@ -106,6 +106,24 @@ private fun Message(text: String) {
     )
 }
 
+/** One team's name on the left and its score on the right, like a scoreboard. */
+@Composable
+private fun TeamLine(name: String, score: String) {
+    Row(Modifier.fillMaxWidth(0.8f), verticalAlignment = Alignment.CenterVertically) {
+        BasicText(
+            name,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+            style = TextStyle(color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold),
+        )
+        BasicText(
+            score.ifBlank { "-" },
+            maxLines = 1,
+            style = TextStyle(color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold),
+        )
+    }
+}
+
 @Composable
 private fun MatchRow(m: MatchScore) {
     var focused by remember { mutableStateOf(false) }
@@ -119,18 +137,17 @@ private fun MatchRow(m: MatchScore) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            val header = listOf(m.competition, m.dateLabel()).filter { it.isNotBlank() }.joinToString("   ·   ")
             BasicText(
-                m.competition,
-                style = TextStyle(color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+                header,
+                style = TextStyle(color = Color.White.copy(alpha = 0.75f), fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
             )
-            BasicText(
-                m.summary(),
-                style = TextStyle(color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold),
-            )
+            TeamLine(m.teamA, m.scoreA)
+            TeamLine(m.teamB, m.scoreB)
             if (m.status.isNotBlank()) {
                 BasicText(
                     m.status,
-                    style = TextStyle(color = Color.White.copy(alpha = 0.85f), fontSize = 17.sp),
+                    style = TextStyle(color = Color(0xFFFFD66B), fontSize = 17.sp, fontWeight = FontWeight.Medium),
                 )
             }
         }

@@ -450,6 +450,13 @@ private fun ScoresCard(matches: List<MatchScore>, modifier: Modifier, onClick: (
                     modifier = Modifier.weight(1f),
                     style = TextStyle(color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold),
                 )
+                if (!m.live && m.shortWhen().isNotBlank()) {
+                    BasicText(
+                        m.shortWhen(),
+                        maxLines = 1,
+                        style = TextStyle(color = Color.White.copy(alpha = 0.7f), fontSize = 15.sp),
+                    )
+                }
             }
         }
     }

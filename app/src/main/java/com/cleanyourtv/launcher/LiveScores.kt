@@ -5,7 +5,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 data class MatchScore(
     val competition: String,
@@ -18,7 +22,27 @@ data class MatchScore(
     /** 0 = live, 1 = upcoming, 2 = finished. */
     val order: Int,
     val featured: Boolean,
+    /** Scheduled start in epoch milliseconds, or 0 if unknown. */
+    val startMillis: Long = 0L,
 ) {
+    /** Full date and time in the TV's time zone, for example "Sun 1 Nov, 12:40 pm". */
+    fun dateLabel(): String =
+        if (startMillis <= 0L) "" else SimpleDateFormat("EEE d MMM, h:mm a", Locale.getDefault()).format(Date(startMillis))
+
+    /** Short form for the home card: "Today 3:30 pm" or "2 Nov". */
+    fun shortWhen(): String {
+        if (startMillis <= 0L) return ""
+        val then = Calendar.getInstance().apply { timeInMillis = startMillis }
+        val today = Calendar.getInstance()
+        val sameDay = then.get(Calendar.YEAR) == today.get(Calendar.YEAR) &&
+            then.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR)
+        return if (sameDay) {
+            "Today " + SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(startMillis))
+        } else {
+            SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(startMillis))
+        }
+    }
+
     fun summary(): String =
         if (scoreA.isBlank() && scoreB.isBlank()) "$teamA  v  $teamB"
         else "$teamA $scoreA  v  $teamB $scoreB"
@@ -39,7 +63,11 @@ object LiveScores {
     private fun rank(m: MatchScore): Int = if (m.featured && m.order != 2) -1 else m.order
 
     /** Live and followed-team matches first, finished matches last. */
-    fun sorted(list: List<MatchScore>): List<MatchScore> = list.sortedBy { rank(it) }
+    fun sorted(list: List<MatchScore>): List<MatchScore> = list.sortedWith(
+        compareBy<MatchScore> { rank(it) }
+            // Soonest first for live and upcoming, most recent first for finished.
+            .thenBy { if (it.order == 2) -it.startMillis else it.startMillis }
+    )
 
     /** Cricket from CricketData (cricapi.com). Free key, about 100 calls a day, so results are cached. */
     suspend fun cricket(context: Context, maxAgeMs: Long): ScoreResult {
@@ -94,6 +122,7 @@ object LiveScores {
                         live = started && !ended,
                         order = if (started && !ended) 0 else if (!started) 1 else 2,
                         featured = isFeatured(a, b),
+                        startMillis = parseUtc(d.optString("dateTimeGMT"), "yyyy-MM-dd'T'HH:mm:ss"),
                     )
                 )
             }
@@ -152,6 +181,7 @@ object LiveScores {
                             else -> 2
                         },
                         featured = isFeatured(a, b),
+                        startMillis = parseUtc(e.optString("date"), "yyyy-MM-dd'T'HH:mm'Z'"),
                     )
                 )
             }
@@ -159,6 +189,16 @@ object LiveScores {
         footballCache = sorted(out)
         footballAt = now
         return ScoreResult(footballCache, null)
+    }
+
+    /** Parses a UTC timestamp, returning 0 if it is blank or in an unexpected format. */
+    private fun parseUtc(text: String, pattern: String): Long {
+        if (text.isBlank()) return 0L
+        return runCatching {
+            val fmt = SimpleDateFormat(pattern, Locale.US)
+            fmt.timeZone = TimeZone.getTimeZone("UTC")
+            fmt.parse(text)?.time ?: 0L
+        }.getOrDefault(0L)
     }
 
     private fun teamName(c: JSONObject): String {
