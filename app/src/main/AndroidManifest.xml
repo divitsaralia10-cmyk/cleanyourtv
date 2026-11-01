@@ -41,5 +41,14 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Receives API keys from scripts/set-keys.ps1 over ADB. -->
+        <receiver
+            android:name=".KeysReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.cleanyourtv.SET_KEYS" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

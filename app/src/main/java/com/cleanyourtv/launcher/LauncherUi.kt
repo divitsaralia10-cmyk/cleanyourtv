@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -27,7 +28,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -72,18 +72,21 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
+enum class Screen { Home, Arcade, Movies, Scores, AllApps }
+
 @Composable
 fun LauncherApp() {
     val context = LocalContext.current
     var apps by remember { mutableStateOf<List<AppEntry>>(emptyList()) }
     var reloadTick by remember { mutableIntStateOf(0) }
     var weather by remember { mutableStateOf<WeatherState?>(null) }
+    var homeScores by remember { mutableStateOf<List<MatchScore>>(emptyList()) }
     var now by remember { mutableStateOf(Date()) }
     var hour by remember { mutableFloatStateOf(currentHour()) }
     var ambient by remember { mutableStateOf(false) }
-    var arcadeOpen by remember { mutableStateOf(false) }
+    var screen by remember { mutableStateOf(Screen.Home) }
     var game by remember { mutableStateOf<GameId?>(null) }
-    var returnedFromArcade by remember { mutableStateOf(false) }
+    var homeFocus by remember { mutableStateOf("apps") }
     var lastInput by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     // Refresh the app list whenever something is installed, removed or changed.
@@ -120,6 +123,16 @@ fun LauncherApp() {
         }
     }
 
+    // Scores preview on the home screen. Cricket has a small free quota, so it refreshes rarely.
+    LaunchedEffect(Unit) {
+        while (true) {
+            val c = LiveScores.cricket(context, 20 * 60_000L).matches
+            val f = LiveScores.football(3 * 60_000L).matches
+            homeScores = LiveScores.sorted(c + f)
+            delay(3 * 60_000L)
+        }
+    }
+
     LaunchedEffect(Unit) {
         while (true) {
             now = Date()
@@ -128,12 +141,12 @@ fun LauncherApp() {
         }
     }
 
-    // After a while with no key presses, show the full-screen ambient clock.
+    // After a while with no key presses on the home screen, show the full-screen ambient clock.
     LaunchedEffect(Unit) {
         while (true) {
             delay(5_000)
             val idleFor = System.currentTimeMillis() - lastInput
-            if (!ambient && !arcadeOpen && game == null && idleFor > Config.IDLE_SECONDS * 1000L) {
+            if (!ambient && screen == Screen.Home && game == null && idleFor > Config.IDLE_SECONDS * 1000L) {
                 ambient = true
             }
         }
@@ -148,8 +161,10 @@ fun LauncherApp() {
     val homeAlpha by animateFloatAsState(if (ambient) 0f else 1f, tween(600), label = "homeAlpha")
     val ambientAlpha by animateFloatAsState(if (ambient) 1f else 0f, tween(800), label = "ambientAlpha")
 
-    // A home screen should not exit on Back (games and the arcade handle Back themselves).
+    // A home screen should not exit on Back (other screens handle Back themselves).
     BackHandler { if (ambient) ambient = false }
+
+    val launch: (AppEntry) -> Unit = { app -> runCatching { context.startActivity(app.intent) } }
 
     Box(
         Modifier
@@ -184,11 +199,31 @@ fun LauncherApp() {
                     else -> {}
                 }
             }
-            arcadeOpen -> ArcadePicker(
+            screen == Screen.Arcade -> ArcadePicker(
                 onPick = { game = it },
                 onBack = {
-                    arcadeOpen = false
-                    returnedFromArcade = true
+                    screen = Screen.Home
+                    homeFocus = "arcade"
+                },
+            )
+            screen == Screen.Movies -> MoviesScreen(
+                onBack = {
+                    screen = Screen.Home
+                    homeFocus = "movies"
+                },
+            )
+            screen == Screen.Scores -> ScoresScreen(
+                onBack = {
+                    screen = Screen.Home
+                    homeFocus = "scores"
+                },
+            )
+            screen == Screen.AllApps -> AllAppsScreen(
+                apps = apps,
+                onLaunch = launch,
+                onBack = {
+                    screen = Screen.Home
+                    homeFocus = "apps"
                 },
             )
             else -> Box(Modifier.fillMaxSize().graphicsLayer { alpha = homeAlpha }) {
@@ -197,9 +232,14 @@ fun LauncherApp() {
                     hour = hour,
                     weather = weather,
                     apps = apps,
-                    initialArcadeFocus = returnedFromArcade,
-                    onOpenArcade = { arcadeOpen = true },
-                    onLaunch = { app -> runCatching { context.startActivity(app.intent) } },
+                    scores = homeScores,
+                    focusOn = homeFocus,
+                    onOpen = { target -> screen = target },
+                    onSettings = {
+                        homeFocus = "settings"
+                        openSettings(context)
+                    },
+                    onLaunch = launch,
                 )
             }
         }
@@ -207,6 +247,21 @@ fun LauncherApp() {
         Box(Modifier.fillMaxSize().graphicsLayer { alpha = ambientAlpha }) {
             AmbientScreen(now = now, hour = hour, weather = weather)
         }
+    }
+}
+
+/** Opens the TV's system settings, trying the generic action first and TV settings apps as fallbacks. */
+private fun openSettings(context: Context) {
+    val pm = context.packageManager
+    val candidates = listOf(
+        Intent(Settings.ACTION_SETTINGS),
+        pm.getLaunchIntentForPackage("com.android.tv.settings"),
+        pm.getLaunchIntentForPackage("com.sony.dtv.settings"),
+    )
+    for (intent in candidates) {
+        if (intent == null) continue
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (runCatching { context.startActivity(intent) }.isSuccess) return
     }
 }
 
@@ -231,31 +286,65 @@ private fun HomeScreen(
     hour: Float,
     weather: WeatherState?,
     apps: List<AppEntry>,
-    initialArcadeFocus: Boolean,
-    onOpenArcade: () -> Unit,
+    scores: List<MatchScore>,
+    focusOn: String,
+    onOpen: (Screen) -> Unit,
+    onSettings: () -> Unit,
     onLaunch: (AppEntry) -> Unit,
 ) {
-    val firstFocus = remember { FocusRequester() }
+    val appsFocus = remember { FocusRequester() }
+    val scoresFocus = remember { FocusRequester() }
+    val moviesFocus = remember { FocusRequester() }
     val arcadeFocus = remember { FocusRequester() }
+    val settingsFocus = remember { FocusRequester() }
 
-    LaunchedEffect(apps.isNotEmpty()) {
-        delay(120)
-        val target = if (initialArcadeFocus) arcadeFocus else if (apps.isNotEmpty()) firstFocus else null
+    LaunchedEffect(focusOn, apps.isNotEmpty()) {
+        delay(150)
+        val target = when (focusOn) {
+            "scores" -> scoresFocus
+            "movies" -> moviesFocus
+            "arcade" -> arcadeFocus
+            "settings" -> settingsFocus
+            else -> if (apps.isNotEmpty()) appsFocus else null
+        }
         if (target != null) runCatching { target.requestFocus() }
     }
 
+    val favorites = remember(apps) {
+        Config.FAVORITE_PACKAGES.mapNotNull { pkg -> apps.firstOrNull { it.packageName == pkg } }
+    }
+    val dockApps = if (favorites.isEmpty()) apps.take(8) else favorites
+
     Column(
-        Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Row(
             Modifier.weight(1f).fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            ClockCard(now, hour, weather, Modifier.weight(1.45f).fillMaxHeight())
-            ArcadeCard(Modifier.weight(1f).fillMaxHeight().focusRequester(arcadeFocus), onOpenArcade)
+            ClockCard(now, hour, weather, Modifier.weight(1.2f).fillMaxHeight())
+            ScoresCard(
+                matches = scores,
+                modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(scoresFocus),
+                onClick = { onOpen(Screen.Scores) },
+            )
         }
-        Dock(apps, firstFocus, onLaunch)
+        Row(
+            Modifier.fillMaxWidth().height(72.dp),
+            horizontalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            ShortcutTile("Movies", "Browse by category", Modifier.weight(1f).fillMaxHeight().focusRequester(moviesFocus)) {
+                onOpen(Screen.Movies)
+            }
+            ShortcutTile("Arcade", "Snake  ·  2048", Modifier.weight(1f).fillMaxHeight().focusRequester(arcadeFocus)) {
+                onOpen(Screen.Arcade)
+            }
+            ShortcutTile("Settings", "Google TV settings", Modifier.weight(1f).fillMaxHeight().focusRequester(settingsFocus)) {
+                onSettings()
+            }
+        }
+        Dock(dockApps, appsFocus, onLaunch, onAllApps = { onOpen(Screen.AllApps) })
     }
 }
 
@@ -270,57 +359,48 @@ private fun Pill(text: String) {
 
 @Composable
 private fun ClockCard(now: Date, hour: Float, weather: WeatherState?, modifier: Modifier) {
+    val line = buildString {
+        append(fmt(now, "EEEE, d MMMM"))
+        if (weather != null) append("  ·  ${weather.tempC}° ${weather.label}")
+        append("  ·  ${Config.CITY}")
+    }
     Column(
-        modifier.glass(RoundedCornerShape(32.dp)).padding(28.dp),
+        modifier.glass(RoundedCornerShape(32.dp)).padding(horizontal = 26.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
-        Column {
+        BasicText(
+            "${greeting(hour)}, ${Config.USER_NAME}",
+            style = TextStyle(color = Color.White.copy(alpha = 0.92f), fontSize = 20.sp, fontWeight = FontWeight.Medium),
+        )
+        Row(verticalAlignment = Alignment.Bottom) {
             BasicText(
-                "${greeting(hour)}, ${Config.USER_NAME}",
-                style = TextStyle(color = Color.White.copy(alpha = 0.92f), fontSize = 20.sp, fontWeight = FontWeight.Medium),
+                fmt(now, "h:mm"),
+                style = TextStyle(color = Color.White, fontSize = 72.sp, fontWeight = FontWeight.Bold),
             )
-            Spacer(Modifier.height(4.dp))
-            Row(verticalAlignment = Alignment.Bottom) {
-                BasicText(
-                    fmt(now, "h:mm"),
-                    style = TextStyle(color = Color.White, fontSize = 88.sp, fontWeight = FontWeight.Bold),
-                )
-                Spacer(Modifier.width(10.dp))
-                BasicText(
-                    fmt(now, "a"),
-                    modifier = Modifier.padding(bottom = 18.dp),
-                    style = TextStyle(color = Color.White.copy(alpha = 0.85f), fontSize = 28.sp, fontWeight = FontWeight.Medium),
-                )
-            }
+            Spacer(Modifier.width(10.dp))
             BasicText(
-                fmt(now, "EEEE, d MMMM"),
-                style = TextStyle(color = Color.White.copy(alpha = 0.85f), fontSize = 22.sp),
+                fmt(now, "a"),
+                modifier = Modifier.padding(bottom = 14.dp),
+                style = TextStyle(color = Color.White.copy(alpha = 0.85f), fontSize = 26.sp, fontWeight = FontWeight.Medium),
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (weather != null) {
-                Pill("${weather.tempC}° ${weather.label}")
-                Pill(Config.CITY)
-                Pill(if (hour < 12f) "Sunrise ${weather.sunrise}" else "Sunset ${weather.sunset}")
-            } else {
-                Pill(Config.CITY)
-            }
-        }
+        BasicText(
+            line,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = TextStyle(color = Color.White.copy(alpha = 0.85f), fontSize = 18.sp),
+        )
     }
 }
 
 @Composable
-private fun ArcadeCard(modifier: Modifier, onClick: () -> Unit) {
-    val context = LocalContext.current
+private fun ScoresCard(matches: List<MatchScore>, modifier: Modifier, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
-        targetValue = if (focused) 1.04f else 1f,
+        targetValue = if (focused) 1.03f else 1f,
         animationSpec = spring(dampingRatio = 0.7f, stiffness = 300f),
-        label = "arcadeScale",
+        label = "scoresScale",
     )
-    val snakeBest = remember { Scores.get(context, "snake") }
-    val best2048 = remember { Scores.get(context, "2048") }
-
     Column(
         modifier
             .graphicsLayer {
@@ -330,12 +410,12 @@ private fun ArcadeCard(modifier: Modifier, onClick: () -> Unit) {
             .glass(RoundedCornerShape(32.dp), highlighted = focused)
             .onFocusChanged { focused = it.isFocused }
             .clickable(onClick = onClick)
-            .padding(28.dp),
-        verticalArrangement = Arrangement.SpaceBetween,
+            .padding(horizontal = 24.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             BasicText(
-                "ARCADE",
+                "LIVE SCORES",
                 style = TextStyle(
                     color = Color.White.copy(alpha = 0.7f),
                     fontSize = 14.sp,
@@ -343,41 +423,82 @@ private fun ArcadeCard(modifier: Modifier, onClick: () -> Unit) {
                     letterSpacing = 3.sp,
                 ),
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.weight(1f))
             BasicText(
-                "Play",
-                style = TextStyle(color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Bold),
-            )
-            BasicText(
-                "Snake  ·  2048",
-                style = TextStyle(color = Color.White.copy(alpha = 0.8f), fontSize = 20.sp),
+                "OK for all",
+                style = TextStyle(color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp),
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
-            for (i in 0 until 7) {
-                Box(
-                    Modifier
-                        .size(18.dp)
-                        .clip(RoundedCornerShape(5.dp))
-                        .background(Color(0xFF7CFFB2).copy(alpha = 0.25f + 0.1f * i))
+        if (matches.isEmpty()) {
+            BasicText(
+                "No matches right now",
+                style = TextStyle(color = Color.White.copy(alpha = 0.85f), fontSize = 20.sp),
+            )
+        }
+        matches.take(3).forEach { m ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (m.live) {
+                    Box(Modifier.size(10.dp).clip(CircleShape).background(Color(0xFFFF4D5E)))
+                }
+                BasicText(
+                    m.summary(),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                    style = TextStyle(color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold),
                 )
             }
-            Spacer(Modifier.width(14.dp))
-            Box(Modifier.size(16.dp).clip(CircleShape).background(Color(0xFFFF6B8A)))
         }
+    }
+}
+
+@Composable
+private fun ShortcutTile(title: String, subtitle: String, modifier: Modifier, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (focused) 1.05f else 1f,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = 300f),
+        label = "shortcutScale",
+    )
+    Column(
+        modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .glass(RoundedCornerShape(26.dp), highlighted = focused)
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(onClick = onClick)
+            .padding(horizontal = 22.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
         BasicText(
-            "Best  Snake $snakeBest  ·  2048 $best2048",
-            style = TextStyle(color = Color.White.copy(alpha = 0.75f), fontSize = 16.sp),
+            title,
+            style = TextStyle(color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold),
+        )
+        BasicText(
+            subtitle,
+            style = TextStyle(color = Color.White.copy(alpha = 0.75f), fontSize = 15.sp),
         )
     }
 }
 
 @Composable
-private fun Dock(apps: List<AppEntry>, firstFocus: FocusRequester, onLaunch: (AppEntry) -> Unit) {
-    Box(Modifier.fillMaxWidth().heightIn(min = 170.dp).glass(RoundedCornerShape(36.dp))) {
+private fun Dock(
+    apps: List<AppEntry>,
+    firstFocus: FocusRequester,
+    onLaunch: (AppEntry) -> Unit,
+    onAllApps: () -> Unit,
+) {
+    Box(Modifier.fillMaxWidth().height(170.dp).glass(RoundedCornerShape(36.dp))) {
         LazyRow(
-            contentPadding = PaddingValues(horizontal = 28.dp, vertical = 22.dp),
-            horizontalArrangement = Arrangement.spacedBy(24.dp),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 28.dp, vertical = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(22.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             itemsIndexed(apps, key = { _, app -> app.packageName }) { index, app ->
                 AppTile(
@@ -386,12 +507,13 @@ private fun Dock(apps: List<AppEntry>, firstFocus: FocusRequester, onLaunch: (Ap
                     onClick = { onLaunch(app) },
                 )
             }
+            item { AllAppsTile(onClick = onAllApps) }
         }
     }
 }
 
 @Composable
-private fun AppTile(app: AppEntry, modifier: Modifier, onClick: () -> Unit) {
+internal fun AppTile(app: AppEntry, modifier: Modifier, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
         targetValue = if (focused) 1.12f else 1f,
@@ -409,7 +531,7 @@ private fun AppTile(app: AppEntry, modifier: Modifier, onClick: () -> Unit) {
     ) {
         Box(
             modifier = modifier
-                .size(width = 200.dp, height = 113.dp)
+                .size(width = 176.dp, height = 99.dp)
                 .glass(shape, highlighted = focused)
                 .onFocusChanged { focused = it.isFocused }
                 .clickable(onClick = onClick),
@@ -419,7 +541,7 @@ private fun AppTile(app: AppEntry, modifier: Modifier, onClick: () -> Unit) {
                 bitmap = app.image,
                 contentDescription = app.label,
                 contentScale = if (app.isBanner) ContentScale.Crop else ContentScale.Fit,
-                modifier = if (app.isBanner) Modifier.fillMaxSize() else Modifier.size(72.dp),
+                modifier = if (app.isBanner) Modifier.fillMaxSize() else Modifier.size(64.dp),
             )
             if (focused) {
                 Box(Modifier.fillMaxSize().border(3.dp, Color.White, shape))
@@ -430,7 +552,60 @@ private fun AppTile(app: AppEntry, modifier: Modifier, onClick: () -> Unit) {
             app.label,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.width(200.dp),
+            modifier = Modifier.width(176.dp),
+            style = TextStyle(
+                color = Color.White.copy(alpha = if (focused) 1f else 0.7f),
+                fontSize = 16.sp,
+                textAlign = TextAlign.Center,
+            ),
+        )
+    }
+}
+
+@Composable
+private fun AllAppsTile(onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (focused) 1.12f else 1f,
+        animationSpec = spring(dampingRatio = 0.7f, stiffness = 300f),
+        label = "allAppsScale",
+    )
+    val shape = RoundedCornerShape(18.dp)
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        },
+    ) {
+        Box(
+            modifier = Modifier
+                .size(width = 176.dp, height = 99.dp)
+                .glass(shape, highlighted = focused)
+                .onFocusChanged { focused = it.isFocused }
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                repeat(2) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        repeat(3) {
+                            Box(
+                                Modifier
+                                    .size(20.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color.White.copy(alpha = 0.85f))
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        BasicText(
+            "All apps",
+            modifier = Modifier.width(176.dp),
             style = TextStyle(
                 color = Color.White.copy(alpha = if (focused) 1f else 0.7f),
                 fontSize = 16.sp,
