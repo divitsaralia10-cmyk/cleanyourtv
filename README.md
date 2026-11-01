@@ -14,9 +14,9 @@ Target device: Sony BRAVIA 4K AE2, Android 14 (SDK 34).
 - **Live scores**: home card plus a Scores screen with Cricket and Football tabs.
   Football comes from ESPN's public feeds (no key). Cricket needs a free CricketData key.
   Teams in `FOLLOW_TEAMS` (default India) are listed first.
-- **Movies**: browse by category (Trending, Bollywood, Action, Comedy, ...) with posters, ratings,
-  and which apps stream, rent or sell the title in India. Needs a free TMDB key; IMDb ratings need a free OMDb key.
-  Rent and buy prices and time limits are not available from these services, so the app shows which apps offer it.
+- **Movies**: browse hand-picked lists by category (Top Rated, Bollywood, South Indian, Action, ...) with
+  posters, IMDb ratings, runtime and plot from OMDb (free key). With a free Watchmode key it also shows which
+  apps stream, rent or sell the title in India, with rent/buy prices. Rental time limits are not available.
 - **Settings** button that opens the TV's system settings
 - **Arcade**: Snake and 2048, with best scores saved on the TV
 - No ads, no sponsored rows, no recommendations
@@ -31,8 +31,9 @@ Every push to `main` runs the `Build APK` workflow. The APK is published at:
 https://github.com/<owner>/<repo>/releases/download/latest/app-debug.apk
 ```
 
-Each CI build is signed with a fresh debug key, so updating an installed copy needs
-`adb uninstall com.cleanyourtv.launcher` first (this also clears the saved keys; run `set-keys.ps1` again).
+Builds are signed with the fixed debug key in `debug.keystore` (public on purpose, debug use only), so
+`adb install -r app-debug.apk` updates in place and keeps your saved keys. Versions before 0.4 used a
+different key, so upgrading from those needs one `adb uninstall com.cleanyourtv.launcher` first.
 
 ## Install (Windows PowerShell, TV paired over wireless debugging)
 
@@ -45,7 +46,7 @@ adb shell am start -n com.cleanyourtv.launcher/.MainActivity
 ## API keys (all free, stored only on the TV)
 
 ```powershell
-.\scripts\set-keys.ps1 -Tmdb YOUR_KEY -Omdb YOUR_KEY -Cricket YOUR_KEY
+.\scripts\set-keys.ps1 -Omdb YOUR_KEY -Watchmode YOUR_KEY -Cricket YOUR_KEY
 ```
 
 ## Debloat

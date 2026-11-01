@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -45,7 +44,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
-import java.util.Locale
 
 /** Pill-shaped focusable chip, shared by the Movies and Scores screens. */
 @Composable
@@ -103,28 +101,30 @@ internal fun SetupMessage(title: String, body: String) {
 @Composable
 fun MoviesScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    val tmdbKey = remember { Keys.tmdb(context) }
     val omdbKey = remember { Keys.omdb(context) }
+    val watchKey = remember { Keys.watchmode(context) }
     BackHandler { onBack() }
 
-    if (tmdbKey.isBlank()) {
+    if (omdbKey.isBlank()) {
         SetupMessage(
-            "Movies need a free TMDB key",
-            "On your PC run:\n.\\scripts\\set-keys.ps1 -Tmdb YOUR_KEY\n" +
-                "For IMDb ratings also add:  -Omdb YOUR_KEY",
+            "Movies need a free OMDb key",
+            "On your PC run:\n.\\scripts\\set-keys.ps1 -Omdb YOUR_KEY\n" +
+                "For where-to-watch info also add:  -Watchmode YOUR_KEY",
         )
     } else {
-        MoviesContent(tmdbKey, omdbKey)
+        MoviesContent(omdbKey, watchKey)
     }
 }
 
 @Composable
-private fun MoviesContent(tmdbKey: String, omdbKey: String) {
+private fun MoviesContent(omdbKey: String, watchKey: String) {
+    val context = LocalContext.current
     var selected by remember { mutableStateOf(MOVIE_CATEGORIES.first()) }
     var movies by remember { mutableStateOf<List<Movie>?>(null) }
     var failed by remember { mutableStateOf(false) }
     var focusedMovie by remember { mutableStateOf<Movie?>(null) }
-    var info by remember { mutableStateOf<MovieInfo?>(null) }
+    var avail by remember { mutableStateOf<Availability?>(null) }
+    var availFailed by remember { mutableStateOf(false) }
     val firstChip = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
@@ -138,7 +138,7 @@ private fun MoviesContent(tmdbKey: String, omdbKey: String) {
         movies = null
         failed = false
         focusedMovie = null
-        val list = Movies.list(tmdbKey, selected)
+        val list = Movies.list(context, omdbKey, selected)
         if (list == null) {
             failed = true
         } else {
@@ -147,22 +147,24 @@ private fun MoviesContent(tmdbKey: String, omdbKey: String) {
         }
     }
 
-    LaunchedEffect(focusedMovie?.id) {
-        info = null
+    LaunchedEffect(focusedMovie?.imdbId) {
+        avail = null
+        availFailed = false
         val m = focusedMovie
-        if (m != null) {
+        if (m != null && watchKey.isNotBlank()) {
             delay(300)
-            info = Movies.info(tmdbKey, omdbKey, m.id)
+            val a = Movies.availability(watchKey, m.imdbId)
+            if (a == null) availFailed = true else avail = a
         }
     }
 
     Column(
-        Modifier.fillMaxSize().padding(horizontal = 44.dp, vertical = 22.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        Modifier.fillMaxSize().padding(horizontal = 44.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         BasicText(
             "Movies",
-            style = TextStyle(color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Bold),
+            style = TextStyle(color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold),
         )
         LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(vertical = 4.dp)) {
             itemsIndexed(MOVIE_CATEGORIES, key = { _, c -> c.name }) { index, cat ->
@@ -176,11 +178,11 @@ private fun MoviesContent(tmdbKey: String, omdbKey: String) {
             }
         }
 
-        Box(Modifier.fillMaxWidth().height(226.dp)) {
+        Box(Modifier.fillMaxWidth().height(206.dp)) {
             val list = movies
             when {
                 failed -> BasicText(
-                    "Couldn't load movies. Check Wi-Fi or the TMDB key.",
+                    "Couldn't load movies. Check Wi-Fi or the OMDb key.",
                     style = TextStyle(color = Color.White.copy(alpha = 0.85f), fontSize = 20.sp),
                 )
                 list == null -> BasicText(
@@ -188,17 +190,23 @@ private fun MoviesContent(tmdbKey: String, omdbKey: String) {
                     style = TextStyle(color = Color.White.copy(alpha = 0.85f), fontSize = 20.sp),
                 )
                 else -> LazyRow(
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 12.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 10.dp),
                     horizontalArrangement = Arrangement.spacedBy(18.dp),
                 ) {
-                    items(list, key = { it.id }) { m ->
+                    items(list, key = { it.imdbId }) { m ->
                         PosterCard(m, onFocus = { focusedMovie = m })
                     }
                 }
             }
         }
 
-        DetailPanel(focusedMovie, info, Modifier.weight(1f))
+        DetailPanel(
+            movie = focusedMovie,
+            avail = avail,
+            availFailed = availFailed,
+            hasWatchKey = watchKey.isNotBlank(),
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
@@ -217,7 +225,7 @@ private fun PosterCard(movie: Movie, onFocus: () -> Unit) {
                 scaleX = scale
                 scaleY = scale
             }
-            .size(width = 130.dp, height = 195.dp)
+            .size(width = 120.dp, height = 180.dp)
             .clip(shape)
             .background(Color.White.copy(alpha = 0.12f))
             .onFocusChanged {
@@ -226,15 +234,23 @@ private fun PosterCard(movie: Movie, onFocus: () -> Unit) {
             }
             .clickable { }
     ) {
-        AsyncImage(
-            model = posterUrl(movie.poster),
-            contentDescription = movie.title,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
-        )
-        if (movie.rating > 0.0) {
+        if (movie.poster != null) {
+            AsyncImage(
+                model = movie.poster,
+                contentDescription = movie.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
             BasicText(
-                "★ " + String.format(Locale.US, "%.1f", movie.rating),
+                movie.title,
+                modifier = Modifier.align(Alignment.Center).padding(10.dp),
+                style = TextStyle(color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold),
+            )
+        }
+        if (movie.imdb != null) {
+            BasicText(
+                "★ ${movie.imdb}",
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .padding(6.dp)
@@ -251,10 +267,16 @@ private fun PosterCard(movie: Movie, onFocus: () -> Unit) {
 }
 
 @Composable
-private fun DetailPanel(movie: Movie?, info: MovieInfo?, modifier: Modifier) {
+private fun DetailPanel(
+    movie: Movie?,
+    avail: Availability?,
+    availFailed: Boolean,
+    hasWatchKey: Boolean,
+    modifier: Modifier,
+) {
     Column(
-        modifier.fillMaxWidth().glass(RoundedCornerShape(24.dp)).padding(horizontal = 22.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(3.dp),
+        modifier.fillMaxWidth().glass(RoundedCornerShape(24.dp)).padding(horizontal = 22.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         if (movie == null) {
             BasicText(
@@ -273,10 +295,9 @@ private fun DetailPanel(movie: Movie?, info: MovieInfo?, modifier: Modifier) {
         )
 
         val ratings = buildString {
-            if (info?.imdb != null) append("IMDb ${info.imdb}    ")
-            append("TMDB " + String.format(Locale.US, "%.1f", movie.rating))
-            if (info?.runtimeMin != null) append("    ${info.runtimeMin / 60}h ${info.runtimeMin % 60}m")
-            if (info != null && info.genres.isNotBlank()) append("    ${info.genres}")
+            append(if (movie.imdb != null) "★ ${movie.imdb} IMDb" else "No IMDb rating")
+            if (movie.runtime.isNotBlank()) append("    ${movie.runtime}")
+            if (movie.genres.isNotBlank()) append("    ${movie.genres.replace(", ", " · ")}")
         }
         BasicText(
             ratings,
@@ -285,30 +306,44 @@ private fun DetailPanel(movie: Movie?, info: MovieInfo?, modifier: Modifier) {
             style = TextStyle(color = Color(0xFFFFD66B), fontSize = 18.sp, fontWeight = FontWeight.Medium),
         )
 
-        if (info == null) {
-            BasicText(
-                "Checking where to watch…",
-                style = TextStyle(color = Color.White.copy(alpha = 0.7f), fontSize = 17.sp),
-            )
-        } else {
-            val stream = if (info.stream.isEmpty()) "not on a streaming app in India" else info.stream.joinToString(", ")
-            BasicText(
-                "Stream: $stream",
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = TextStyle(color = Color.White, fontSize = 17.sp),
-            )
-            if (info.rentBuy.isNotEmpty()) {
-                BasicText(
-                    "Rent / buy: ${info.rentBuy.joinToString(", ")}  (price shown in the app)",
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = TextStyle(color = Color.White, fontSize = 17.sp),
-                )
+        val infoStyle = TextStyle(color = Color.White, fontSize = 17.sp)
+        val dimStyle = TextStyle(color = Color.White.copy(alpha = 0.7f), fontSize = 17.sp)
+        when {
+            !hasWatchKey -> BasicText("Add a Watchmode key to see where to watch", style = dimStyle)
+            availFailed -> BasicText("Where-to-watch info unavailable right now", style = dimStyle)
+            avail == null -> BasicText("Checking where to watch…", style = dimStyle)
+            else -> {
+                if (avail.stream.isEmpty() && avail.rent.isEmpty() && avail.buy.isEmpty()) {
+                    BasicText("Not listed on any app in India", style = dimStyle)
+                }
+                if (avail.stream.isNotEmpty()) {
+                    BasicText(
+                        "Stream: ${avail.stream.joinToString(", ")}",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = infoStyle,
+                    )
+                }
+                if (avail.rent.isNotEmpty()) {
+                    BasicText(
+                        "Rent: ${avail.rent.joinToString(", ")}",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = infoStyle,
+                    )
+                }
+                if (avail.buy.isNotEmpty()) {
+                    BasicText(
+                        "Buy: ${avail.buy.joinToString(", ")}",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = infoStyle,
+                    )
+                }
             }
         }
         BasicText(
-            movie.overview,
+            movie.plot,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             style = TextStyle(color = Color.White.copy(alpha = 0.75f), fontSize = 15.sp),

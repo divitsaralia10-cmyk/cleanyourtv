@@ -12,8 +12,18 @@ android {
         applicationId = "com.cleanyourtv.launcher"
         minSdk = 28
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
+    }
+
+    // A fixed, public debug key so every CI build is signed the same way and updates install in place.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {

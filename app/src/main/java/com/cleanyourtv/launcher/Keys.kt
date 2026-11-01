@@ -11,8 +11,8 @@ import android.content.Intent
 object Keys {
     private fun prefs(c: Context) = c.getSharedPreferences("cleantv_keys", Context.MODE_PRIVATE)
 
-    fun tmdb(c: Context): String = prefs(c).getString("tmdb", "").orEmpty()
     fun omdb(c: Context): String = prefs(c).getString("omdb", "").orEmpty()
+    fun watchmode(c: Context): String = prefs(c).getString("watchmode", "").orEmpty()
     fun cricket(c: Context): String = prefs(c).getString("cricket", "").orEmpty()
 
     fun set(c: Context, name: String, value: String) {
@@ -22,7 +22,7 @@ object Keys {
 
 class KeysReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        for (name in listOf("tmdb", "omdb", "cricket")) {
+        for (name in listOf("omdb", "watchmode", "cricket")) {
             val v = intent.getStringExtra(name)?.trim().orEmpty()
             if (v.isNotEmpty()) Keys.set(context, name, v)
         }
