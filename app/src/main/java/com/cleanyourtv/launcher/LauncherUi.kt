@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -83,11 +84,20 @@ fun LauncherApp() {
     var homeScores by remember { mutableStateOf<List<MatchScore>>(emptyList()) }
     var now by remember { mutableStateOf(Date()) }
     var hour by remember { mutableFloatStateOf(currentHour()) }
-    var ambient by remember { mutableStateOf(false) }
+    var ambient by remember { mutableStateOf(true) }
     var screen by remember { mutableStateOf(Screen.Home) }
     var game by remember { mutableStateOf<GameId?>(null) }
     var homeFocus by remember { mutableStateOf("apps") }
     var lastInput by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    // Every time the launcher opens or Home is pressed: back to the welcome screen, with home reset.
+    LaunchedEffect(AppState.resumeTick.intValue) {
+        ambient = true
+        screen = Screen.Home
+        game = null
+        homeFocus = "apps"
+        lastInput = System.currentTimeMillis()
+    }
 
     // Refresh the app list whenever something is installed, removed or changed.
     DisposableEffect(context) {
@@ -126,7 +136,7 @@ fun LauncherApp() {
     // Scores preview on the home screen. Cricket has a small free quota, so it refreshes rarely.
     LaunchedEffect(Unit) {
         while (true) {
-            val c = LiveScores.cricket(context, 20 * 60_000L).matches
+            val c = LiveScores.cricket(context, 30 * 60_000L).matches
             val f = LiveScores.football(3 * 60_000L).matches
             homeScores = LiveScores.sorted(c + f)
             delay(3 * 60_000L)
@@ -158,8 +168,12 @@ fun LauncherApp() {
         animationSpec = infiniteRepeatable(tween(40_000, easing = LinearEasing), RepeatMode.Reverse),
         label = "driftValue",
     )
-    val homeAlpha by animateFloatAsState(if (ambient) 0f else 1f, tween(600), label = "homeAlpha")
-    val ambientAlpha by animateFloatAsState(if (ambient) 1f else 0f, tween(800), label = "ambientAlpha")
+    // 0 = welcome screen covers everything, 1 = welcome screen has slid away and home is visible.
+    val reveal by animateFloatAsState(
+        if (ambient) 0f else 1f,
+        tween(650, easing = FastOutSlowInEasing),
+        label = "reveal",
+    )
 
     // A home screen should not exit on Back (other screens handle Back themselves).
     BackHandler { if (ambient) ambient = false }
@@ -196,6 +210,12 @@ fun LauncherApp() {
                 when (game) {
                     GameId.Snake -> SnakeGame(onExit = { game = null })
                     GameId.Game2048 -> Game2048(onExit = { game = null })
+                    GameId.Cricket -> CricketGame(onExit = { game = null })
+                    GameId.Breakout -> BreakoutGame(onExit = { game = null })
+                    GameId.Flappy -> FlappyGame(onExit = { game = null })
+                    GameId.Pong -> PongGame(onExit = { game = null })
+                    GameId.Tetris -> TetrisGame(onExit = { game = null })
+                    GameId.Memory -> MemoryGame(onExit = { game = null })
                     else -> {}
                 }
             }
@@ -226,7 +246,12 @@ fun LauncherApp() {
                     homeFocus = "apps"
                 },
             )
-            else -> Box(Modifier.fillMaxSize().graphicsLayer { alpha = homeAlpha }) {
+            else -> Box(
+                Modifier.fillMaxSize().graphicsLayer {
+                    alpha = reveal
+                    translationY = (1f - reveal) * 48f
+                }
+            ) {
                 HomeScreen(
                     now = now,
                     hour = hour,
@@ -244,8 +269,8 @@ fun LauncherApp() {
             }
         }
 
-        Box(Modifier.fillMaxSize().graphicsLayer { alpha = ambientAlpha }) {
-            AmbientScreen(now = now, hour = hour, weather = weather)
+        Box(Modifier.fillMaxSize().graphicsLayer { translationY = -size.height * reveal }) {
+            WelcomeScreen(now = now, hour = hour, weather = weather)
         }
     }
 }
@@ -270,14 +295,14 @@ private fun currentHour(): Float {
     return c.get(Calendar.HOUR_OF_DAY) + c.get(Calendar.MINUTE) / 60f
 }
 
-private fun greeting(hour: Float): String = when {
+internal fun greeting(hour: Float): String = when {
     hour >= 5f && hour < 12f -> "Good morning"
     hour >= 12f && hour < 17f -> "Good afternoon"
     hour >= 17f && hour < 21f -> "Good evening"
     else -> "Good night"
 }
 
-private fun fmt(date: Date, pattern: String): String =
+internal fun fmt(date: Date, pattern: String): String =
     SimpleDateFormat(pattern, Locale.getDefault()).format(date)
 
 @Composable
@@ -337,7 +362,7 @@ private fun HomeScreen(
             ShortcutTile("Movies", "Browse by category", Modifier.weight(1f).fillMaxHeight().focusRequester(moviesFocus)) {
                 onOpen(Screen.Movies)
             }
-            ShortcutTile("Arcade", "Snake  ·  2048", Modifier.weight(1f).fillMaxHeight().focusRequester(arcadeFocus)) {
+            ShortcutTile("Arcade", "8 games  ·  Cricket 3D", Modifier.weight(1f).fillMaxHeight().focusRequester(arcadeFocus)) {
                 onOpen(Screen.Arcade)
             }
             ShortcutTile("Settings", "Google TV settings", Modifier.weight(1f).fillMaxHeight().focusRequester(settingsFocus)) {
@@ -349,7 +374,7 @@ private fun HomeScreen(
 }
 
 @Composable
-private fun Pill(text: String) {
+internal fun Pill(text: String) {
     BasicText(
         text,
         modifier = Modifier.glass(RoundedCornerShape(50)).padding(horizontal = 14.dp, vertical = 8.dp),
@@ -618,52 +643,6 @@ private fun AllAppsTile(onClick: () -> Unit) {
                 fontSize = 16.sp,
                 textAlign = TextAlign.Center,
             ),
-        )
-    }
-}
-
-@Composable
-private fun AmbientScreen(now: Date, hour: Float, weather: WeatherState?) {
-    Box(Modifier.fillMaxSize()) {
-        Column(
-            Modifier.align(Alignment.TopCenter).padding(top = 40.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            BasicText(
-                "${greeting(hour)}, ${Config.USER_NAME}",
-                style = TextStyle(color = Color.White.copy(alpha = 0.95f), fontSize = 24.sp, fontWeight = FontWeight.Medium),
-            )
-            Spacer(Modifier.height(6.dp))
-            BasicText(
-                fmt(now, "EEEE, d MMMM"),
-                style = TextStyle(color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.SemiBold),
-            )
-        }
-        Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.Bottom) {
-            BasicText(
-                fmt(now, "h:mm"),
-                style = TextStyle(color = Color.White, fontSize = 150.sp, fontWeight = FontWeight.Bold),
-            )
-            Spacer(Modifier.width(12.dp))
-            BasicText(
-                fmt(now, "a"),
-                modifier = Modifier.padding(bottom = 30.dp),
-                style = TextStyle(color = Color.White.copy(alpha = 0.9f), fontSize = 44.sp, fontWeight = FontWeight.Medium),
-            )
-        }
-        if (weather != null) {
-            Row(
-                Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Pill("${weather.tempC}° ${weather.label}  ·  ${Config.CITY}")
-                Pill(if (hour < 12f) "Sunrise ${weather.sunrise}" else "Sunset ${weather.sunset}")
-            }
-        }
-        BasicText(
-            "Press any button",
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 36.dp),
-            style = TextStyle(color = Color.White.copy(alpha = 0.6f), fontSize = 16.sp),
         )
     }
 }

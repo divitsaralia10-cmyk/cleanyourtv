@@ -9,7 +9,9 @@ Target device: Sony BRAVIA 4K AE2, Android 14 (SDK 34).
 
 - Glass home screen: greeting, big clock, date, live weather (Open-Meteo, no key)
 - Procedural sky that follows the time of day, with a moving sun or moon and drifting mountains
-- Ambient mode: after 90 seconds of no key presses, a full-screen clock; any key returns
+- Welcome screen: every time the launcher opens, or Home is pressed, a full-screen greeting with the clock,
+  date, temperature and weather. Press OK and it slides away to the home screen. It also returns after
+  90 seconds of no key presses.
 - **Favorite apps** pinned in the dock (edit `FAVORITE_PACKAGES` in `Config.kt`), plus an **All apps** screen
 - **Live scores**: home card plus a Scores screen with Cricket and Football tabs.
   Football comes from ESPN's public feeds (no key). Cricket needs a free CricketData key.
@@ -18,7 +20,9 @@ Target device: Sony BRAVIA 4K AE2, Android 14 (SDK 34).
   posters, IMDb ratings, runtime and plot from OMDb (free key). With a free Watchmode key it also shows which
   apps stream, rent or sell the title in India, with rent/buy prices. Rental time limits are not available.
 - **Settings** button that opens the TV's system settings
-- **Arcade**: Snake and 2048, with best scores saved on the TV
+- **Arcade**: Cricket 3D, Snake, 2048, Breakout, Flappy, Pong, Tetris, Memory (best scores saved on the TV)
+- **Welcome screen** every time the launcher opens; OK slides to home
+- **Make default**: `scripts\make-default.ps1`
 - No ads, no sponsored rows, no recommendations
 
 Personal settings (name, city, favorites, leagues) live in `Config.kt`.

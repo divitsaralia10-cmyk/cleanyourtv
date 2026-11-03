@@ -12,8 +12,8 @@ android {
         applicationId = "com.cleanyourtv.launcher"
         minSdk = 28
         targetSdk = 34
-        versionCode = 5
-        versionName = "0.4.1"
+        versionCode = 6
+        versionName = "0.5.0"
     }
 
     // A fixed, public debug key so every CI build is signed the same way and updates install in place.

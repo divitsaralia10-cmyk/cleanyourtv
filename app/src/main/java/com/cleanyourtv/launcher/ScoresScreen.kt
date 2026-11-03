@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -40,6 +39,30 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
+private sealed interface ScoreRow {
+    data class Header(val text: String) : ScoreRow
+    data class Match(val m: MatchScore) : ScoreRow
+}
+
+/** Groups matches under "Live now", then one heading per day, then "Results". */
+private fun buildRows(matches: List<MatchScore>): List<ScoreRow> {
+    val rows = ArrayList<ScoreRow>()
+    var last = ""
+    for (m in matches) {
+        val header = when (m.order) {
+            0 -> "Live now"
+            1 -> m.dayLabel()
+            else -> "Results"
+        }
+        if (header != last) {
+            rows.add(ScoreRow.Header(header))
+            last = header
+        }
+        rows.add(ScoreRow.Match(m))
+    }
+    return rows
+}
+
 @Composable
 fun ScoresScreen(onBack: () -> Unit) {
     val context = LocalContext.current
@@ -55,10 +78,10 @@ fun ScoresScreen(onBack: () -> Unit) {
         runCatching { firstTab.requestFocus() }
     }
 
-    // Refresh every minute while this screen is open (cricket is cached for 5 minutes to respect its free limit).
+    // Refresh every minute while this screen is open. Cricket is cached for 10 minutes to respect its free limit.
     LaunchedEffect(Unit) {
         while (true) {
-            cricket = LiveScores.cricket(context, 5 * 60_000L)
+            cricket = LiveScores.cricket(context, 10 * 60_000L)
             football = LiveScores.football(60_000L)
             delay(60_000L)
         }
@@ -66,7 +89,7 @@ fun ScoresScreen(onBack: () -> Unit) {
 
     Column(
         Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 26.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             BasicText(
@@ -86,12 +109,36 @@ fun ScoresScreen(onBack: () -> Unit) {
                     "On your PC run:  .\\scripts\\set-keys.ps1 -Cricket YOUR_KEY"
             )
             result.matches.isEmpty() && result.error == "OFFLINE" -> Message("Couldn't reach the score service. Check Wi-Fi.")
-            result.matches.isEmpty() -> Message("No matches right now.")
-            else -> LazyColumn(
-                contentPadding = PaddingValues(vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(result.matches) { m -> MatchRow(m) }
+            result.matches.isEmpty() && result.error != null -> Message("Score service says: ${result.error}")
+            result.matches.isEmpty() -> Message(if (tab == 0) "No cricket matches in the next two weeks." else "No football matches today.")
+            else -> {
+                if (result.error != null) {
+                    BasicText(
+                        "Showing saved scores (update failed: ${result.error})",
+                        style = TextStyle(color = Color(0xFFFFD66B), fontSize = 15.sp),
+                    )
+                }
+                val rows = remember(result.matches) { buildRows(result.matches) }
+                LazyColumn(
+                    contentPadding = PaddingValues(vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(rows) { row ->
+                        when (row) {
+                            is ScoreRow.Header -> BasicText(
+                                row.text,
+                                modifier = Modifier.padding(top = 8.dp, start = 6.dp),
+                                style = TextStyle(
+                                    color = Color.White.copy(alpha = 0.85f),
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    letterSpacing = 1.sp,
+                                ),
+                            )
+                            is ScoreRow.Match -> MatchRow(row.m)
+                        }
+                    }
+                }
             }
         }
     }
@@ -117,7 +164,7 @@ private fun TeamLine(name: String, score: String) {
             style = TextStyle(color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold),
         )
         BasicText(
-            score.ifBlank { "-" },
+            score,
             maxLines = 1,
             style = TextStyle(color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold),
         )
@@ -137,26 +184,37 @@ private fun MatchRow(m: MatchScore) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            val header = listOf(m.competition, m.dateLabel()).filter { it.isNotBlank() }.joinToString("   ·   ")
             BasicText(
-                header,
+                m.competition,
+                maxLines = 1,
                 style = TextStyle(color = Color.White.copy(alpha = 0.75f), fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
             )
-            TeamLine(m.teamA, m.scoreA)
-            TeamLine(m.teamB, m.scoreB)
-            if (m.status.isNotBlank()) {
+            TeamLine(m.teamA, if (m.order == 1) "" else m.scoreA)
+            TeamLine(m.teamB, if (m.order == 1) "" else m.scoreB)
+            // Upcoming matches only say "Match not started", which the time already tells.
+            if (m.order != 1 && m.status.isNotBlank()) {
                 BasicText(
                     m.status,
                     style = TextStyle(color = Color(0xFFFFD66B), fontSize = 17.sp, fontWeight = FontWeight.Medium),
                 )
             }
         }
-        if (m.live) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        when {
+            m.live -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.size(12.dp).clip(CircleShape).background(Color(0xFFFF4D5E)))
                 BasicText(
                     "LIVE",
                     style = TextStyle(color = Color(0xFFFF8A94), fontSize = 18.sp, fontWeight = FontWeight.Bold),
+                )
+            }
+            m.order == 1 -> Column(horizontalAlignment = Alignment.End) {
+                BasicText(
+                    m.timeLabel(),
+                    style = TextStyle(color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold),
+                )
+                BasicText(
+                    m.dayLabel(),
+                    style = TextStyle(color = Color.White.copy(alpha = 0.7f), fontSize = 15.sp),
                 )
             }
         }

@@ -6,5 +6,6 @@ $ErrorActionPreference = 'Stop'
 
 if (-not (adb devices | Select-String 'device\s*$')) { throw 'No ADB device connected' }
 
+adb shell pm enable com.google.android.apps.tv.launcherx
 adb shell cmd package set-home-activity com.google.android.apps.tv.launcherx/com.google.android.apps.tv.launcherx.home.HomeActivity
 Write-Host 'Stock launcher restored as default. Press Home to check.'

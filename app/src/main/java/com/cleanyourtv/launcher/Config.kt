@@ -10,7 +10,10 @@ object Config {
     /** Two-letter country code used for "where to watch" lookups. */
     const val REGION = "IN"
 
-    /** Seconds without a key press before the full-screen ambient clock appears. */
+    /** Match dates and times are always shown in this time zone, whatever the TV's clock says. */
+    const val TIME_ZONE = "Asia/Kolkata"
+
+    /** Seconds without a key press before the full-screen greeting screen appears again. */
     const val IDLE_SECONDS = 90L
 
     /** Shown first in the dock, in this order. Apps that are not installed are skipped. */
@@ -26,8 +29,14 @@ object Config {
         "com.mxtech.videoplayer.television",    // MX Player
     )
 
-    /** Matches containing these team names are listed first. */
+    /** Matches with these teams are always listed first. */
     val FOLLOW_TEAMS: List<String> = listOf("India")
+
+    /** Matches between two of these teams rank right after your followed teams. */
+    val MAJOR_TEAMS: List<String> = listOf(
+        "India", "Pakistan", "Australia", "England", "South Africa",
+        "New Zealand", "Sri Lanka", "Bangladesh", "West Indies", "Afghanistan",
+    )
 
     /** ESPN league slug to display name, for football scores. */
     val FOOTBALL_LEAGUES: List<Pair<String, String>> = listOf(
